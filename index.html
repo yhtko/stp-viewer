@@ -603,9 +603,110 @@ function extractFaceGeometry(meshData,brepFace){
   return {geo,centroid,normal:avgNormal,positions,normals};
 }
 
-function classifyFace(positions,normal){
+function solve3x3(a,b){
+  const m=a.map((row,i)=>[...row,b[i]]);
+  for(let c=0;c<3;c++){
+    let p=c;
+    for(let r=c+1;r<3;r++)if(Math.abs(m[r][c])>Math.abs(m[p][c]))p=r;
+    if(Math.abs(m[p][c])<1e-9)return null;
+    [m[c],m[p]]=[m[p],m[c]];
+    const div=m[c][c];
+    for(let j=c;j<4;j++)m[c][j]/=div;
+    for(let r=0;r<3;r++){
+      if(r===c)continue;
+      const f=m[r][c];
+      for(let j=c;j<4;j++)m[r][j]-=f*m[c][j];
+    }
+  }
+  return [m[0][3],m[1][3],m[2][3]];
+}
+
+function jacobiSmallestEigenVector(m){
+  const a=m.map(row=>row.slice());
+  const v=[[1,0,0],[0,1,0],[0,0,1]];
+  for(let iter=0;iter<24;iter++){
+    let p=0,q=1,max=Math.abs(a[0][1]);
+    [[0,2],[1,2]].forEach(([i,j])=>{
+      const val=Math.abs(a[i][j]);
+      if(val>max){max=val;p=i;q=j;}
+    });
+    if(max<1e-10)break;
+    const phi=0.5*Math.atan2(2*a[p][q],a[q][q]-a[p][p]);
+    const c=Math.cos(phi),s=Math.sin(phi);
+    for(let k=0;k<3;k++){
+      const apk=a[p][k],aqk=a[q][k];
+      a[p][k]=c*apk-s*aqk;
+      a[q][k]=s*apk+c*aqk;
+    }
+    for(let k=0;k<3;k++){
+      const akp=a[k][p],akq=a[k][q];
+      a[k][p]=c*akp-s*akq;
+      a[k][q]=s*akp+c*akq;
+      const vkp=v[k][p],vkq=v[k][q];
+      v[k][p]=c*vkp-s*vkq;
+      v[k][q]=s*vkp+c*vkq;
+    }
+  }
+  const vals=[a[0][0],a[1][1],a[2][2]];
+  const idx=vals.indexOf(Math.min(...vals));
+  return new THREE.Vector3(v[0][idx],v[1][idx],v[2][idx]).normalize();
+}
+
+function fitCircle2d(points){
+  let sx=0,sy=0,sxx=0,syy=0,sxy=0,sz=0,sxz=0,syz=0;
+  points.forEach(([x,y])=>{
+    const z=x*x+y*y;
+    sx+=x;sy+=y;sxx+=x*x;syy+=y*y;sxy+=x*y;sz+=z;sxz+=x*z;syz+=y*z;
+  });
+  const n=points.length;
+  const sol=solve3x3([[sxx,sxy,sx],[sxy,syy,sy],[sx,sy,n]],[-sxz,-syz,-sz]);
+  if(!sol)return null;
+  const [a,b,c]=sol;
+  const cx=-a/2,cy=-b/2;
+  const r2=cx*cx+cy*cy-c;
+  if(r2<=0)return null;
+  const radius=Math.sqrt(r2);
+  const errors=points.map(([x,y])=>Math.abs(Math.hypot(x-cx,y-cy)-radius));
+  const meanErr=errors.reduce((s,e)=>s+e,0)/errors.length;
+  const maxErr=Math.max(...errors);
+  return {cx,cy,radius,meanErr,maxErr,cv:meanErr/radius};
+}
+
+function classifyFace(positions,normal,normals){
   const n=positions.length/3;
   if(n<6)return{type:'planar'};
+  const normalVecs=[];
+  for(let i=0;i<normals.length;i+=3){
+    const nv=new THREE.Vector3(normals[i],normals[i+1],normals[i+2]);
+    if(nv.lengthSq()>1e-10)normalVecs.push(nv.normalize());
+  }
+  if(normalVecs.length>=6){
+    const avg=normalVecs.reduce((v,nv)=>v.add(nv),new THREE.Vector3()).divideScalar(normalVecs.length);
+    if(avg.length()>0.92)return{type:'planar'};
+    const cov=[[0,0,0],[0,0,0],[0,0,0]];
+    normalVecs.forEach(nv=>{
+      cov[0][0]+=nv.x*nv.x;cov[0][1]+=nv.x*nv.y;cov[0][2]+=nv.x*nv.z;
+      cov[1][0]+=nv.y*nv.x;cov[1][1]+=nv.y*nv.y;cov[1][2]+=nv.y*nv.z;
+      cov[2][0]+=nv.z*nv.x;cov[2][1]+=nv.z*nv.y;cov[2][2]+=nv.z*nv.z;
+    });
+    const axis=jacobiSmallestEigenVector(cov);
+    const perpScore=normalVecs.reduce((s,nv)=>s+Math.abs(nv.dot(axis)),0)/normalVecs.length;
+    if(perpScore<0.22){
+      const u=new THREE.Vector3(1,0,0).cross(axis);
+      if(u.lengthSq()<1e-8)u.set(0,1,0).cross(axis);
+      u.normalize();
+      const v=new THREE.Vector3().crossVectors(axis,u).normalize();
+      const pts=[];
+      for(let i=0;i<positions.length;i+=3){
+        const p=new THREE.Vector3(positions[i],positions[i+1],positions[i+2]);
+        pts.push([p.dot(u),p.dot(v)]);
+      }
+      const circle=fitCircle2d(pts);
+      if(circle&&circle.cv<0.08){
+        return{type:'cylindrical',radius:circle.radius,cv:circle.cv,axis};
+      }
+    }
+  }
   let cx=0,cy=0,cz=0;
   for(let i=0;i<positions.length;i+=3){cx+=positions[i];cy+=positions[i+1];cz+=positions[i+2];}
   cx/=n;cy/=n;cz/=n;
@@ -649,7 +750,7 @@ async function loadSTP(buffer,filename){
         meshData.brep_faces.forEach((brepFace,fi)=>{
           const {geo,centroid,normal,positions,normals}=extractFaceGeometry(meshData,brepFace);
           if(positions.length===0)return;
-          const faceResult=classifyFace(positions,normal);
+          const faceResult=classifyFace(positions,normal,normals);
           const mat=makeMat(currentStyle,mi);
           const mesh=new THREE.Mesh(geo,mat);
           mesh.userData={meshIdx:mi,faceIdx:fi};

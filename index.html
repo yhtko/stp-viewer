@@ -124,6 +124,24 @@ main { flex:1; position:relative; overflow:hidden; }
 .style-btn:hover { color:var(--text); }
 .style-btn.active { background:var(--bg3); color:var(--text); }
 
+/* 規定ビュー panel - bottom center, above toolbar */
+#view-panel {
+  position:absolute; bottom:84px; left:50%; transform:translateX(-50%);
+  display:none; gap:4px;
+  background:var(--panel-bg); border:1px solid var(--border); border-radius:10px;
+  padding:5px; backdrop-filter:blur(8px); box-shadow:0 4px 20px rgba(0,0,0,0.18);
+  max-width:calc(100vw - 16px); overflow-x:auto;
+}
+.view-btn {
+  padding:6px 11px; border-radius:6px; border:1px solid var(--border);
+  background:var(--bg3); color:var(--text2); font-size:12px; font-weight:600;
+  cursor:pointer; transition:all 0.15s; min-width:38px; white-space:nowrap;
+}
+.view-btn:hover { color:var(--text); border-color:var(--text3); }
+
+/* Parts panel filename */
+.parts-file { font-size:11px;color:var(--text2);font-weight:600;margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+
 /* Info panel - top left */
 .info-panel {
   position:absolute; top:12px; left:12px;
@@ -303,7 +321,8 @@ body.face-mode #canvas { cursor:crosshair; }
 
   <div id="parts-panel">
     <div class="parts-controls">
-      <div class="parts-title">部品表示</div>
+      <div class="parts-title">部品ツリー</div>
+      <div class="parts-file" id="parts-file"></div>
       <div class="parts-actions">
         <button class="copy-btn" id="show-all-parts">全表示</button>
         <button class="copy-btn" id="trans-all-parts">半透明</button>
@@ -319,7 +338,9 @@ body.face-mode #canvas { cursor:crosshair; }
   <!-- ツールバー -->
   <div class="toolbar" id="toolbar">
     <button class="tool-btn" id="btn-fit"><span class="icon">⊡</span>全体表示</button>
+    <button class="tool-btn" id="btn-view"><span class="icon">⊞</span>ビュー</button>
     <button class="tool-btn" id="btn-wire"><span class="icon">⬡</span>ワイヤー</button>
+    <button class="tool-btn" id="btn-edge"><span class="icon">◫</span>エッジ</button>
     <div class="tool-sep"></div>
     <button class="tool-btn" id="btn-face"><span class="icon">◉</span>面を選ぶ</button>
     <div class="tool-sep"></div>
@@ -329,6 +350,17 @@ body.face-mode #canvas { cursor:crosshair; }
     <button class="tool-btn" id="btn-shot"><span class="icon">▣</span>PNG</button>
     <div class="tool-sep"></div>
     <button class="tool-btn" id="btn-guide"><span class="icon">？</span>使い方</button>
+  </div>
+
+  <!-- 規定ビュー -->
+  <div id="view-panel">
+    <button class="view-btn" data-view="front">前</button>
+    <button class="view-btn" data-view="back">後</button>
+    <button class="view-btn" data-view="left">左</button>
+    <button class="view-btn" data-view="right">右</button>
+    <button class="view-btn" data-view="top">上</button>
+    <button class="view-btn" data-view="bottom">下</button>
+    <button class="view-btn" data-view="iso">等角</button>
   </div>
 
   <!-- スタイル切替 -->
@@ -451,6 +483,7 @@ let isDark = false;
 function applyTheme() {
   document.body.classList.toggle('light',!isDark);
   renderer.setClearColor(isDark ? 0x0f1117 : 0xeef2f6);
+  edgeMat.color.set(isDark ? 0xaebccf : 0x2a3040);
   $('theme-btn').textContent = isDark ? '☀️' : '🌙';
 }
 $('theme-btn').addEventListener('click',()=>{ isDark=!isDark; applyTheme(); });
@@ -464,7 +497,17 @@ $('theme-btn').addEventListener('click',()=>{ isDark=!isDark; applyTheme(); });
 
 // ---- State ----
 let occt=null, modelGroup=null, faceObjects=[], meshParts=[], selectedFaces=[], wireframe=false, faceMode=false, distanceLine=null, currentStyle='matte';
-let explodeAmount=0, explodeScale=1;
+let explodeAmount=0, explodeScale=1, edgesVisible=false;
+const edgeMat=new THREE.LineBasicMaterial({color:0x2a3040});
+
+// 面の境界（特徴エッジ）をメッシュの子として追加。親メッシュの分解移動・表示切替に追従する
+function addEdges(mesh,geo){
+  const eg=new THREE.EdgesGeometry(geo,30);
+  const line=new THREE.LineSegments(eg,edgeMat);
+  line.userData.isEdge=true;
+  line.visible=edgesVisible;
+  mesh.add(line);
+}
 const palette=[0x4a90d9,0x5ba8a0,0x7b68cc,0x4aac6e,0xc07840];
 const SEL_COLORS=[0xf0c040,0xff6b6b];
 
@@ -795,7 +838,7 @@ async function loadSTP(buffer,filename){
     if(distanceLine){scene.remove(distanceLine);distanceLine=null;}
 
     let totalFaces=0;
-    meshParts = result.meshes.map((_,mi)=>({name:`Part ${mi+1}`,visible:true,transparent:false}));
+    meshParts = result.meshes.map((m,mi)=>({name:(m.name&&String(m.name).trim())?String(m.name).trim():`Part ${mi+1}`,visible:true,transparent:false}));
     result.meshes.forEach((meshData,mi)=>{
       const hasFaces=meshData.brep_faces&&meshData.brep_faces.length>0;
       if(hasFaces){
@@ -806,6 +849,7 @@ async function loadSTP(buffer,filename){
           const mat=makeMat(currentStyle,mi);
           const mesh=new THREE.Mesh(geo,mat);
           mesh.userData={meshIdx:mi,faceIdx:fi};
+          addEdges(mesh,geo);
           modelGroup.add(mesh);
           faceObjects.push({mesh,faceIdx:fi,meshIdx:mi,faceType:faceResult.type,centroid,normal,positions,normalArrow:null,cylInfo:faceResult});
           totalFaces++;
@@ -819,6 +863,7 @@ async function loadSTP(buffer,filename){
         geo.computeVertexNormals();
         const mesh=new THREE.Mesh(geo,makeMat(currentStyle,mi));
         mesh.userData={meshIdx:mi};
+        addEdges(mesh,geo);
         modelGroup.add(mesh);
       }
     });
@@ -860,6 +905,7 @@ async function loadSTP(buffer,filename){
     $('info').style.display='block';
     $('toolbar').style.display='flex';
     $('style-sw').style.display='flex';
+    $('parts-file').textContent=filename;
     renderPartsPanel();
     $('dropzone').classList.add('hidden');
     $('filename').textContent=filename;
@@ -1032,6 +1078,50 @@ $('btn-wire').addEventListener('click',()=>{
   wireframe=!wireframe;
   $('btn-wire').classList.toggle('active',wireframe);
   modelGroup.traverse(o=>{if(o.isMesh)o.material.wireframe=wireframe;});
+});
+
+// ---- エッジ表示 ----
+$('btn-edge').addEventListener('click',()=>{
+  if(!modelGroup)return;
+  edgesVisible=!edgesVisible;
+  $('btn-edge').classList.toggle('active',edgesVisible);
+  modelGroup.traverse(o=>{if(o.userData.isEdge)o.visible=edgesVisible;});
+});
+
+// ---- 規定ビュー ----
+const VIEWS={
+  front:{dir:[0,0,1],up:[0,1,0]},
+  back:{dir:[0,0,-1],up:[0,1,0]},
+  right:{dir:[1,0,0],up:[0,1,0]},
+  left:{dir:[-1,0,0],up:[0,1,0]},
+  top:{dir:[0,1,0],up:[0,0,-1]},
+  bottom:{dir:[0,-1,0],up:[0,0,1]},
+  iso:{dir:[1,0.8,1],up:[0,1,0]},
+};
+function setView(name){
+  if(!modelGroup)return;
+  const v=VIEWS[name];if(!v)return;
+  const box=new THREE.Box3().setFromObject(modelGroup);
+  const center=box.getCenter(new THREE.Vector3());
+  const size=box.getSize(new THREE.Vector3());
+  const maxDim=Math.max(size.x,size.y,size.z)||1;
+  const dist=(maxDim/2)/Math.tan((camera.fov/2)*Math.PI/180)*2.2;
+  const dir=new THREE.Vector3(...v.dir).normalize();
+  orbitControls.target.copy(center);
+  camera.up.set(...v.up);
+  camera.position.copy(center).addScaledVector(dir,dist);
+  camera.lookAt(center);
+  orbitControls.update();
+}
+$('btn-view').addEventListener('click',()=>{
+  if(!modelGroup)return;
+  const panel=$('view-panel');
+  const visible=panel.style.display==='flex';
+  panel.style.display=visible?'none':'flex';
+  $('btn-view').classList.toggle('active',!visible);
+});
+document.querySelectorAll('.view-btn').forEach(b=>{
+  b.addEventListener('click',()=>setView(b.dataset.view));
 });
 
 $('btn-face').addEventListener('click',()=>{

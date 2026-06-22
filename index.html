@@ -195,6 +195,9 @@ input[type=range] { flex:1;cursor:pointer;accent-color:var(--accent); }
 }
 .part-btn.active { color:var(--accent);border-color:var(--accent); }
 .parts-actions { display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px; }
+.explode-box { border-top:1px solid var(--border);margin-top:8px;padding-top:8px; }
+.explode-head { display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--text2);margin-bottom:6px; }
+.explode-val { color:var(--text);font-variant-numeric:tabular-nums; }
 
 /* Face mode cursor */
 body.face-mode #canvas { cursor:crosshair; }
@@ -300,6 +303,10 @@ body.face-mode #canvas { cursor:crosshair; }
     <div class="parts-actions">
       <button class="copy-btn" id="show-all-parts">全表示</button>
       <button class="copy-btn" id="trans-all-parts">半透明</button>
+    </div>
+    <div class="explode-box">
+      <div class="explode-head"><span>簡易分解</span><span class="explode-val" id="explode-val">0%</span></div>
+      <input type="range" id="explode-range" min="0" max="100" step="1" value="0">
     </div>
   </div>
 
@@ -451,6 +458,7 @@ $('theme-btn').addEventListener('click',()=>{ isDark=!isDark; applyTheme(); });
 
 // ---- State ----
 let occt=null, modelGroup=null, faceObjects=[], meshParts=[], selectedFaces=[], wireframe=false, faceMode=false, distanceLine=null, currentStyle='matte';
+let explodeAmount=0, explodeScale=1;
 const palette=[0x4a90d9,0x5ba8a0,0x7b68cc,0x4aac6e,0xc07840];
 const SEL_COLORS=[0xf0c040,0xff6b6b];
 
@@ -499,6 +507,43 @@ function applyPartState(index){
   });
 }
 
+function applyExplode(){
+  if(!modelGroup)return;
+  modelGroup.traverse(o=>{
+    if(o.isMesh){
+      const part=meshParts[o.userData.meshIdx||0];
+      if(part?.explodeDir)o.position.copy(part.explodeDir).multiplyScalar(explodeAmount*explodeScale);
+    }
+  });
+  $('explode-val').textContent=`${Math.round(explodeAmount*100)}%`;
+  if(selectedFaces.length>0)updateSelectionPanel();
+}
+
+function setupExplodeVectors(modelCenter,maxDim){
+  explodeScale=maxDim*0.65;
+  meshParts.forEach((part,i)=>{
+    const box=new THREE.Box3();
+    let hasMesh=false;
+    modelGroup.traverse(o=>{
+      if(o.isMesh&&o.userData.meshIdx===i){
+        o.position.set(0,0,0);
+        o.updateMatrixWorld(true);
+        box.expandByObject(o);
+        hasMesh=true;
+      }
+    });
+    const center=hasMesh?box.getCenter(new THREE.Vector3()):modelCenter.clone();
+    const dir=center.clone().sub(modelCenter);
+    if(dir.lengthSq()<1e-8)dir.set((i%3)-1,Math.floor(i/3)%3-1,1);
+    part.explodeDir=dir.normalize();
+  });
+}
+
+function faceWorldCentroid(fo){
+  const offset=fo.mesh?.position||new THREE.Vector3();
+  return fo.centroid.clone().add(offset);
+}
+
 function renderPartsPanel(){
   const list=$('parts-list');
   if(!list)return;
@@ -529,16 +574,17 @@ function formatSelectionText(){
   if(selectedFaces.length===0)return '';
   const lines=['STP Viewer selection'];
   selectedFaces.forEach((fo,idx)=>{
+    const wc=faceWorldCentroid(fo);
     lines.push(`Face ${idx+1}`);
     lines.push(`  type: ${fo.faceType==='cylindrical'?'estimated cylindrical mesh':'mesh face'}`);
-    lines.push(`  centroid: X ${fo.centroid.x.toFixed(3)}, Y ${fo.centroid.y.toFixed(3)}, Z ${fo.centroid.z.toFixed(3)} mm`);
+    lines.push(`  centroid: X ${wc.x.toFixed(3)}, Y ${wc.y.toFixed(3)}, Z ${wc.z.toFixed(3)} mm`);
     if(fo.cylInfo?.radius){
       lines.push(`  reference radius: ${fo.cylInfo.radius.toFixed(3)} mm`);
       lines.push(`  reference diameter: ${(fo.cylInfo.radius*2).toFixed(3)} mm`);
     }
   });
   if(selectedFaces.length===2){
-    const ca=selectedFaces[0].centroid,cb=selectedFaces[1].centroid;
+    const ca=faceWorldCentroid(selectedFaces[0]),cb=faceWorldCentroid(selectedFaces[1]);
     lines.push('Centroid distance');
     lines.push(`  dX ${Math.abs(cb.x-ca.x).toFixed(3)} mm`);
     lines.push(`  dY ${Math.abs(cb.y-ca.y).toFixed(3)} mm`);
@@ -739,7 +785,7 @@ async function loadSTP(buffer,filename){
 
     if(modelGroup)scene.remove(modelGroup);
     faceObjects.forEach(fo=>{if(fo.normalArrow)scene.remove(fo.normalArrow);});
-    faceObjects=[];meshParts=[];selectedFaces=[];modelGroup=new THREE.Group();wireframe=false;
+    faceObjects=[];meshParts=[];selectedFaces=[];modelGroup=new THREE.Group();wireframe=false;explodeAmount=0;
     if(distanceLine){scene.remove(distanceLine);distanceLine=null;}
 
     let totalFaces=0;
@@ -779,6 +825,9 @@ async function loadSTP(buffer,filename){
     const center=box.getCenter(new THREE.Vector3());
     const size=box.getSize(new THREE.Vector3());
     const maxDim=Math.max(size.x,size.y,size.z);
+    setupExplodeVectors(center,maxDim);
+    $('explode-range').value=0;
+    applyExplode();
     const dist=(maxDim/2)/Math.tan((camera.fov/2)*Math.PI/180)*1.4;
     orbitControls.target.copy(center);
     camera.position.copy(center).add(new THREE.Vector3(dist,dist*0.6,dist));
@@ -867,7 +916,8 @@ function updateSelectionPanel(){
   selectedFaces.forEach((fo,idx)=>{
     const color='#'+SEL_COLORS[idx].toString(16).padStart(6,'0');
     const type=fo.faceType==='cylindrical'?'推定円筒メッシュ':'面メッシュ';
-    const cx=fo.centroid.x.toFixed(3),cy=fo.centroid.y.toFixed(3),cz=fo.centroid.z.toFixed(3);
+    const wc=faceWorldCentroid(fo);
+    const cx=wc.x.toFixed(3),cy=wc.y.toFixed(3),cz=wc.z.toFixed(3);
     html+=`<div style="margin-bottom:8px">
       <div style="margin-bottom:3px"><span class="sel-badge" style="background:${color}"></span><b>面 ${idx+1}</b> (${type})</div>
       <div class="sel-row"><span>重心 X</span><span class="sel-val">${cx}</span></div>
@@ -879,7 +929,7 @@ function updateSelectionPanel(){
     </div>`;
   });
   if(selectedFaces.length===2){
-    const ca=selectedFaces[0].centroid,cb=selectedFaces[1].centroid;
+    const ca=faceWorldCentroid(selectedFaces[0]),cb=faceWorldCentroid(selectedFaces[1]);
     const dx=Math.abs(cb.x-ca.x),dy=Math.abs(cb.y-ca.y),dz=Math.abs(cb.z-ca.z),dist=ca.distanceTo(cb);
     if(distanceLine)scene.remove(distanceLine);
     const geo=new THREE.BufferGeometry().setFromPoints([ca,cb]);
@@ -1031,6 +1081,11 @@ $('trans-all-parts').addEventListener('click',()=>{
   const next=!meshParts.every(part=>part.transparent);
   meshParts.forEach((part,i)=>{part.transparent=next;applyPartState(i);});
   renderPartsPanel();
+});
+
+$('explode-range').addEventListener('input',e=>{
+  explodeAmount=Number(e.target.value)/100;
+  applyExplode();
 });
 
 $('btn-shot').addEventListener('click',downloadScreenshot);

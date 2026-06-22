@@ -161,6 +161,7 @@ hr.div { border:none;border-top:1px solid var(--border);margin:8px 0; }
   transition:all 0.15s;
 }
 .copy-btn:hover { color:var(--text);border-color:var(--text3); }
+.copy-btn.active { color:var(--accent);border-color:var(--accent); }
 
 /* Clip panel */
 #clip-panel {
@@ -202,6 +203,29 @@ input[type=range] { flex:1;cursor:pointer;accent-color:var(--accent); }
 .explode-box { border-top:1px solid var(--border);margin-top:8px;padding-top:8px; }
 .explode-head { display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--text2);margin-bottom:6px; }
 .explode-val { color:var(--text);font-variant-numeric:tabular-nums; }
+
+/* Hole panel */
+#holes-panel {
+  position:absolute; top:12px; right:12px; transform:translateY(74px);
+  background:var(--panel-bg); border:1px solid var(--border); border-radius:8px;
+  padding:10px 12px; backdrop-filter:blur(8px); display:none;
+  box-shadow:0 6px 22px rgba(15,23,42,0.16); width:270px; max-height:54vh; overflow:hidden;
+}
+.holes-title { font-size:10px;font-weight:700;letter-spacing:0.08em;color:var(--text3);text-transform:uppercase;margin-bottom:8px; }
+.holes-controls { background:var(--panel-bg);padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:8px; }
+.holes-note { font-size:10px;color:var(--text3);line-height:1.5; margin-top:8px; }
+#holes-list { max-height:calc(54vh - 138px);overflow:auto;padding-right:3px; }
+#holes-list::-webkit-scrollbar { width:6px; }
+#holes-list::-webkit-scrollbar-thumb { background:var(--border);border-radius:999px; }
+.hole-row {
+  display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;
+  padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);
+  margin-bottom:6px;cursor:pointer;
+}
+.hole-row.active { border-color:var(--accent); box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.hole-main { font-size:11px;color:var(--text2); }
+.hole-sub { font-size:10px;color:var(--text3); }
+.hole-dia { font-size:12px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums; }
 
 /* Face mode cursor */
 body.face-mode #canvas { cursor:crosshair; }
@@ -316,6 +340,18 @@ body.face-mode #canvas { cursor:crosshair; }
     <div id="parts-list"></div>
   </div>
 
+  <div id="holes-panel">
+    <div class="holes-controls">
+      <div class="holes-title">穴候補</div>
+      <div class="parts-actions">
+        <button class="copy-btn" id="toggle-holes">候補強調</button>
+        <button class="copy-btn" id="clear-hole-focus">注視解除</button>
+      </div>
+      <div class="holes-note">円筒面から抽出した候補です。取付穴を保証するものではありません。</div>
+    </div>
+    <div id="holes-list"></div>
+  </div>
+
   <!-- ツールバー -->
   <div class="toolbar" id="toolbar">
     <button class="tool-btn" id="btn-fit"><span class="icon">⊡</span>全体表示</button>
@@ -325,6 +361,7 @@ body.face-mode #canvas { cursor:crosshair; }
     <div class="tool-sep"></div>
     <button class="tool-btn" id="btn-clip"><span class="icon">✂</span>断面</button>
     <div class="tool-sep"></div>
+    <button class="tool-btn" id="btn-holes"><span class="icon">◎</span>穴候補</button>
     <button class="tool-btn" id="btn-parts"><span class="icon">▤</span>部品</button>
     <button class="tool-btn" id="btn-shot"><span class="icon">▣</span>PNG</button>
     <div class="tool-sep"></div>
@@ -463,14 +500,25 @@ $('theme-btn').addEventListener('click',()=>{ isDark=!isDark; applyTheme(); });
 })();
 
 // ---- State ----
-let occt=null, modelGroup=null, faceObjects=[], meshParts=[], selectedFaces=[], wireframe=false, faceMode=false, distanceLine=null, currentStyle='matte';
+let occt=null, modelGroup=null, faceObjects=[], meshParts=[], holeCandidates=[], selectedFaces=[], wireframe=false, faceMode=false, distanceLine=null, currentStyle='matte';
 let explodeAmount=0, explodeScale=1;
 const palette=[0x4a90d9,0x5ba8a0,0x7b68cc,0x4aac6e,0xc07840];
 const SEL_COLORS=[0xf0c040,0xff6b6b];
+let holesHighlighted=false, focusedHoleIdx=-1;
 
 function setStatus(cls,txt){ $('dot').className='dot '+cls; $('stxt').textContent=txt; }
 function showOverlay(txt){ $('overlay').style.display='flex'; $('overlay-text').textContent=txt; }
 function hideOverlay(){ $('overlay').style.display='none'; }
+
+function makeHoleMat(kind='all'){
+  const color = kind==='focus' ? 0xff7a00 : 0x0ea5e9;
+  return new THREE.MeshStandardMaterial({
+    color,roughness:0.35,metalness:0.12,side:THREE.DoubleSide,
+    polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1,
+    clippingPlanes:clipPlanes.filter((_,i)=>clipEnabled[i]),
+    emissive:new THREE.Color(color).multiplyScalar(kind==='focus' ? 0.22 : 0.12),
+  });
+}
 
 // ---- Material ----
 function makeMat(style,index){
@@ -485,20 +533,34 @@ function makeMat(style,index){
 }
 
 function refreshMeshMaterial(mesh){
-  if(!mesh?.isMesh || selectedFaces.some(fo=>fo.mesh===mesh))return;
+  if(!mesh?.isMesh)return;
+  const fo=faceObjects.find(face=>face.mesh===mesh);
+  if(fo){ applyFaceVisual(fo); return; }
   mesh.material.dispose();
   mesh.material=makeMat(currentStyle,mesh.userData.meshIdx||0);
   mesh.material.wireframe=wireframe;
 }
 
+function applyFaceVisual(fo){
+  if(!fo?.mesh?.isMesh)return;
+  const selIdx=selectedFaces.indexOf(fo);
+  if(selIdx>=0){ selectFace(fo,selIdx); return; }
+  const holeIdx=fo.holeCandidateIndex ?? -1;
+  const focus = holeIdx>=0 && holeIdx===focusedHoleIdx;
+  const highlight = holeIdx>=0 && holesHighlighted;
+  fo.mesh.material.dispose();
+  fo.mesh.material = focus ? makeHoleMat('focus') : highlight ? makeHoleMat('all') : makeMat(currentStyle,fo.meshIdx);
+  fo.mesh.material.wireframe=wireframe;
+}
+
+function applyAllFaceVisuals(){
+  faceObjects.forEach(applyFaceVisual);
+}
+
 function applyStyle(style){
   currentStyle=style;
   if(!modelGroup)return;
-  faceObjects.forEach(fo=>{
-    if(!selectedFaces.includes(fo)){
-      refreshMeshMaterial(fo.mesh);
-    }
-  });
+  applyAllFaceVisuals();
   modelGroup.traverse(o=>refreshMeshMaterial(o));
 }
 
@@ -511,6 +573,7 @@ function applyPartState(index){
       refreshMeshMaterial(o);
     }
   });
+  if($('holes-panel').style.display==='block')renderHolePanel();
 }
 
 function applyExplode(){
@@ -523,6 +586,7 @@ function applyExplode(){
   });
   $('explode-val').textContent=`${Math.round(explodeAmount*100)}%`;
   if(selectedFaces.length>0)updateSelectionPanel();
+  if($('holes-panel').style.display==='block')renderHolePanel();
 }
 
 function setupExplodeVectors(modelCenter,maxDim){
@@ -548,6 +612,41 @@ function setupExplodeVectors(modelCenter,maxDim){
 function faceWorldCentroid(fo){
   const offset=fo.mesh?.position||new THREE.Vector3();
   return fo.centroid.clone().add(offset);
+}
+
+function buildHoleCandidates(){
+  holeCandidates = faceObjects
+    .filter(fo=>fo.cylInfo?.radius && Number.isFinite(fo.cylInfo.radius))
+    .map(fo=>({
+      fo,
+      diameter: fo.cylInfo.radius*2,
+      centroid: fo.centroid.clone(),
+      meshIdx: fo.meshIdx,
+    }))
+    .filter(c=>c.diameter>0.5)
+    .sort((a,b)=>a.diameter-b.diameter);
+  faceObjects.forEach(fo=>{ fo.holeCandidateIndex = -1; });
+  holeCandidates.forEach((c,i)=>{ c.fo.holeCandidateIndex = i; });
+}
+
+function renderHolePanel(){
+  const list=$('holes-list');
+  if(!list)return;
+  $('toggle-holes').classList.toggle('active',holesHighlighted);
+  if(holeCandidates.length===0){
+    list.innerHTML='<div class="sel-note">候補は見つかりませんでした。</div>';
+    return;
+  }
+  list.innerHTML=holeCandidates.map((c,i)=>{
+    const wc=faceWorldCentroid(c.fo);
+    return `<div class="hole-row ${focusedHoleIdx===i?'active':''}" data-hole-idx="${i}">
+      <div>
+        <div class="hole-main">候補 ${i+1}</div>
+        <div class="hole-sub">Part ${c.meshIdx+1} / X ${wc.x.toFixed(1)} Y ${wc.y.toFixed(1)} Z ${wc.z.toFixed(1)}</div>
+      </div>
+      <div class="hole-dia">${c.diameter.toFixed(2)}</div>
+    </div>`;
+  }).join('');
 }
 
 function renderPartsPanel(){
@@ -791,7 +890,7 @@ async function loadSTP(buffer,filename){
 
     if(modelGroup)scene.remove(modelGroup);
     faceObjects.forEach(fo=>{if(fo.normalArrow)scene.remove(fo.normalArrow);});
-    faceObjects=[];meshParts=[];selectedFaces=[];modelGroup=new THREE.Group();wireframe=false;explodeAmount=0;
+    faceObjects=[];meshParts=[];holeCandidates=[];selectedFaces=[];modelGroup=new THREE.Group();wireframe=false;explodeAmount=0;holesHighlighted=false;focusedHoleIdx=-1;
     if(distanceLine){scene.remove(distanceLine);distanceLine=null;}
 
     let totalFaces=0;
@@ -824,6 +923,7 @@ async function loadSTP(buffer,filename){
     });
 
     scene.add(modelGroup);
+    buildHoleCandidates();
 
     // Fit camera
     const box=new THREE.Box3().setFromObject(modelGroup);
@@ -861,6 +961,7 @@ async function loadSTP(buffer,filename){
     $('toolbar').style.display='flex';
     $('style-sw').style.display='flex';
     renderPartsPanel();
+    renderHolePanel();
     $('dropzone').classList.add('hidden');
     $('filename').textContent=filename;
     setStatus('ready','表示完了');
@@ -900,6 +1001,7 @@ const raycaster=new THREE.Raycaster();
 
 function selectFace(fo,selIdx){
   const color=SEL_COLORS[selIdx];
+  if(fo.mesh.material)fo.mesh.material.dispose();
   fo.mesh.material=new THREE.MeshStandardMaterial({
     color,roughness:0.4,metalness:0.1,side:THREE.DoubleSide,
     polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1,
@@ -909,9 +1011,7 @@ function selectFace(fo,selIdx){
 }
 
 function deselectFace(fo){
-  fo.mesh.material.dispose();
-  fo.mesh.material=makeMat(currentStyle,fo.meshIdx);
-  fo.mesh.material.wireframe=wireframe;
+  applyFaceVisual(fo);
 }
 
 function updateSelectionPanel(){
@@ -949,6 +1049,26 @@ function updateSelectionPanel(){
     <div class="sel-row" style="margin-top:4px"><span><b>直線距離</b></span><span class="sel-val" style="color:var(--text);font-size:13px">${dist.toFixed(3)} mm</span></div>`;
   }
   content.innerHTML=html;
+}
+
+function focusHoleCandidate(index){
+  const candidate=holeCandidates[index];
+  if(!candidate)return;
+  focusedHoleIdx=index;
+  applyAllFaceVisuals();
+  renderHolePanel();
+  const target=faceWorldCentroid(candidate.fo);
+  const dir=candidate.fo.normal?.clone().normalize();
+  const offset=(candidate.diameter||10)*2.4;
+  if(dir && dir.lengthSq()>0){
+    orbitControls.target.copy(target);
+    camera.position.copy(target).add(dir.multiplyScalar(offset));
+  }else{
+    orbitControls.target.copy(target);
+    camera.position.copy(target).add(new THREE.Vector3(offset,offset*0.6,offset));
+  }
+  camera.lookAt(target);
+  orbitControls.update();
 }
 
 $('clear-sel').addEventListener('click',()=>{
@@ -1059,6 +1179,32 @@ $('btn-parts').addEventListener('click',()=>{
   const visible=panel.style.display==='block';
   panel.style.display=visible?'none':'block';
   $('btn-parts').classList.toggle('active',!visible);
+});
+
+$('btn-holes').addEventListener('click',()=>{
+  const panel=$('holes-panel');
+  const visible=panel.style.display==='block';
+  panel.style.display=visible?'none':'block';
+  $('btn-holes').classList.toggle('active',!visible);
+  renderHolePanel();
+});
+
+$('toggle-holes').addEventListener('click',()=>{
+  holesHighlighted=!holesHighlighted;
+  applyAllFaceVisuals();
+  renderHolePanel();
+});
+
+$('clear-hole-focus').addEventListener('click',()=>{
+  focusedHoleIdx=-1;
+  applyAllFaceVisuals();
+  renderHolePanel();
+});
+
+$('holes-list').addEventListener('click',e=>{
+  const row=e.target.closest('[data-hole-idx]');
+  if(!row)return;
+  focusHoleCandidate(Number(row.dataset.holeIdx));
 });
 
 $('parts-list').addEventListener('click',e=>{

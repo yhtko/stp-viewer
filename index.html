@@ -349,6 +349,7 @@ body.face-mode #canvas { cursor:crosshair; }
     <div class="tool-sep"></div>
     <button class="tool-btn" id="btn-parts"><span class="icon">▤</span>部品</button>
     <button class="tool-btn" id="btn-shot"><span class="icon">▣</span>PNG</button>
+    <button class="tool-btn" id="btn-copyimg"><span class="icon">⧉</span>コピー</button>
     <div class="tool-sep"></div>
     <button class="tool-btn" id="btn-guide"><span class="icon">？</span>使い方</button>
   </div>
@@ -614,6 +615,21 @@ function downloadScreenshot(){
   link.download=`${base}-view.png`;
   link.href=canvas.toDataURL('image/png');
   link.click();
+}
+
+async function copyScreenshotToClipboard(){
+  if(!modelGroup)return;
+  renderer.render(scene,camera);
+  if(!navigator.clipboard||!window.ClipboardItem){ setStatus('error','コピー非対応'); return; }
+  try{
+    // toBlob を Promise で ClipboardItem に渡す（Safari/Chrome 両対応・ユーザー操作を維持）
+    await navigator.clipboard.write([new ClipboardItem({
+      'image/png': new Promise(resolve=>canvas.toBlob(b=>resolve(b),'image/png'))
+    })]);
+    setStatus('ready','画像をコピーしました');
+  }catch(e){
+    setStatus('error','コピーできません'); console.error(e);
+  }
 }
 
 function formatSelectionText(){
@@ -1204,6 +1220,7 @@ $('explode-range').addEventListener('input',e=>{
 });
 
 $('btn-shot').addEventListener('click',downloadScreenshot);
+$('btn-copyimg').addEventListener('click',copyScreenshotToClipboard);
 
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&faceMode){

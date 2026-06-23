@@ -124,17 +124,21 @@ main { flex:1; position:relative; overflow:hidden; }
 .style-btn:hover { color:var(--text); }
 .style-btn.active { background:var(--bg3); color:var(--text); }
 
-/* ViewCube - 左上の方向選択キューブ */
-#viewcube {
-  position:absolute; top:12px; left:12px;
-  width:108px; height:108px; display:none; cursor:default; z-index:6;
-  filter:drop-shadow(0 2px 8px rgba(15,23,42,0.25));
+/* 規定ビューパネル - 左上 */
+#view-panel {
+  position:absolute; top:12px; left:12px; display:none; z-index:6;
+  background:var(--panel-bg); border:1px solid var(--border); border-radius:10px;
+  padding:8px 9px; backdrop-filter:blur(8px); box-shadow:0 4px 18px rgba(15,23,42,0.18);
 }
-#viewcube-label {
-  position:absolute; top:120px; left:12px; display:none; z-index:6;
-  font-size:9px; font-weight:700; letter-spacing:0.08em; color:var(--text3);
-  text-transform:uppercase; pointer-events:none; text-shadow:0 1px 2px var(--bg);
+.view-title { font-size:9px;font-weight:700;letter-spacing:0.08em;color:var(--text3);text-transform:uppercase;margin-bottom:6px;text-align:center; }
+.view-grid { display:grid; grid-template-columns:repeat(4,32px); grid-auto-rows:34px; gap:3px; }
+.vbtn {
+  display:flex; align-items:center; justify-content:center; padding:0;
+  border:1px solid transparent; border-radius:6px; background:transparent;
+  cursor:pointer; transition:all 0.12s;
 }
+.vbtn:hover { background:var(--bg3); border-color:var(--accent); }
+.vbtn svg { display:block; }
 
 /* Parts panel filename */
 .parts-file { font-size:11px;color:var(--text2);font-weight:600;margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
@@ -196,7 +200,7 @@ input[type=range] { flex:1;cursor:pointer;accent-color:var(--accent); }
 
 /* Parts panel */
 #parts-panel {
-  position:absolute; top:12px; left:12px; transform:translateY(132px);
+  position:absolute; top:12px; left:12px; transform:translateY(196px);
   background:var(--panel-bg); border:1px solid var(--border); border-radius:8px;
   padding:10px 12px; backdrop-filter:blur(8px); display:none;
   box-shadow:0 6px 22px rgba(15,23,42,0.16); width:260px; max-height:54vh; overflow:hidden;
@@ -348,9 +352,11 @@ body.face-mode #canvas { cursor:crosshair; }
     <button class="tool-btn" id="btn-guide"><span class="icon">？</span>使い方</button>
   </div>
 
-  <!-- ViewCube（左上の方向選択キューブ） -->
-  <canvas id="viewcube"></canvas>
-  <div id="viewcube-label">ビュー</div>
+  <!-- 規定ビューパネル（左上の方向選択） -->
+  <div id="view-panel">
+    <div class="view-title">ビュー</div>
+    <div class="view-grid" id="view-grid"></div>
+  </div>
 
   <!-- スタイル切替 -->
   <div class="style-sw" id="style-sw">
@@ -482,7 +488,6 @@ $('theme-btn').addEventListener('click',()=>{ isDark=!isDark; applyTheme(); });
   requestAnimationFrame(animate);
   orbitControls.update();
   renderer.render(scene,camera);
-  if(typeof renderViewCube==='function')renderViewCube();
 })();
 
 // ---- State ----
@@ -896,8 +901,7 @@ async function loadSTP(buffer,filename){
     $('info').style.display='block';
     $('toolbar').style.display='flex';
     $('style-sw').style.display='flex';
-    $('viewcube').style.display='block';
-    $('viewcube-label').style.display='block';
+    $('view-panel').style.display='block';
     $('parts-file').textContent=filename;
     renderPartsPanel();
     $('dropzone').classList.add('hidden');
@@ -1081,70 +1085,40 @@ $('btn-edge').addEventListener('click',()=>{
   modelGroup.traverse(o=>{if(o.userData.isEdge)o.visible=edgesVisible;});
 });
 
-// ---- ViewCube（SolidWorks風の方向選択キューブ） ----
-// var で巻き上げ初期化（undefined）。animate の初回同期実行が cubeReady より先に
-// renderViewCube を呼ぶため、let だと TDZ 例外でスクリプトが中断してしまう。
-var cubeReady=false;
-const cubeCanvas=$('viewcube');
-const cubeRenderer=new THREE.WebGLRenderer({canvas:cubeCanvas,antialias:true,alpha:true});
-cubeRenderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
-cubeRenderer.setSize(108,108);
-const cubeScene=new THREE.Scene();
-const cubeCam=new THREE.OrthographicCamera(-1.7,1.7,1.7,-1.7,0.1,20);
-cubeCam.position.set(0,0,6); cubeCam.lookAt(0,0,0);
-cubeScene.add(new THREE.AmbientLight(0xffffff,1));
-
-function cubeFaceTexture(label){
-  const c=document.createElement('canvas'); c.width=c.height=128;
-  const x=c.getContext('2d');
-  x.fillStyle='#eef2f7'; x.fillRect(0,0,128,128);
-  x.strokeStyle='#9aa7b8'; x.lineWidth=7; x.strokeRect(4,4,120,120);
-  x.fillStyle='#27324a'; x.font='bold 54px system-ui,-apple-system,sans-serif';
-  x.textAlign='center'; x.textBaseline='middle'; x.fillText(label,64,70);
-  return new THREE.CanvasTexture(c);
-}
-// BoxGeometryのマテリアル順: +X,-X,+Y,-Y,+Z,-Z
-const cubeLabels=['右','左','上','下','前','後'];
-const CUBE_BASE=0xcdd6e2, CUBE_HOVER=0x6c8ebf;
-const cubeMats=cubeLabels.map(l=>new THREE.MeshBasicMaterial({map:cubeFaceTexture(l),color:CUBE_BASE}));
-const cube=new THREE.Mesh(new THREE.BoxGeometry(2,2,2),cubeMats);
-cube.add(new THREE.LineSegments(new THREE.EdgesGeometry(cube.geometry),new THREE.LineBasicMaterial({color:0x5a6678})));
-cubeScene.add(cube);
-cubeReady=true;
-
-function renderViewCube(){
-  if(!cubeReady)return;
-  cube.quaternion.copy(camera.quaternion).invert();
-  cube.updateMatrixWorld();
-  cubeRenderer.render(cubeScene,cubeCam);
+// ---- 規定ビューパネル（SolidWorks風のアイソメ・キューブ アイコン一覧） ----
+// 各ビューを小さな等角投影キューブで表し、対象面を青で強調。全ビューを常時表示する。
+// type A = 上/正面/右が見える向き, type B = 下/背面/左が見える向き（Aの上下反転）
+function cubeIcon(type,hi){
+  const A={top:'24,6 42,16 24,26 6,16',front:'6,16 24,26 24,46 6,36',right:'42,16 24,26 24,46 42,36'};
+  const B={bottom:'24,46 42,36 24,26 6,36',back:'6,36 24,26 24,6 6,16',left:'42,36 24,26 24,6 42,16'};
+  const faces=type==='A'?A:B;
+  const order=type==='A'?['top','front','right']:['bottom','back','left'];
+  const polys=order.map(f=>{
+    const fill=(hi==='all'||hi===f)?'#5b8fd6':'#dbe1ea';
+    return `<polygon points="${faces[f]}" fill="${fill}" stroke="#39435a" stroke-width="1.3" stroke-linejoin="round"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 48 52" width="30" height="32">${polys}</svg>`;
 }
 
-const cubeRay=new THREE.Raycaster();
-function cubePick(ev){
-  const r=cubeCanvas.getBoundingClientRect();
-  const m=new THREE.Vector2(((ev.clientX-r.left)/r.width)*2-1,-((ev.clientY-r.top)/r.height)*2+1);
-  cubeRay.setFromCamera(m,cubeCam);
-  return cubeRay.intersectObject(cube,false)[0]||null;
-}
-cubeCanvas.addEventListener('mousemove',ev=>{
-  const hit=cubePick(ev);
-  const fi=hit?Math.floor(hit.faceIndex/2):-1;
-  cubeMats.forEach((mm,i)=>mm.color.setHex(i===fi?CUBE_HOVER:CUBE_BASE));
-  cubeCanvas.style.cursor=hit?'pointer':'default';
-});
-cubeCanvas.addEventListener('mouseleave',()=>cubeMats.forEach(mm=>mm.color.setHex(CUBE_BASE)));
-cubeCanvas.addEventListener('click',ev=>{
-  const hit=cubePick(ev); if(!hit||!modelGroup)return;
-  const n=hit.face.normal, p=cube.worldToLocal(hit.point.clone());
-  // 面=軸方向、辺/角=斜め方向（3x3領域判定）
-  const dir=new THREE.Vector3();
-  ['x','y','z'].forEach(ax=>{
-    if(Math.abs(n[ax])>0.5) dir[ax]=Math.sign(n[ax]);
-    else dir[ax]=Math.abs(p[ax])>0.4?Math.sign(p[ax]):0;
+const VIEW_BTNS=[
+  {t:'A',f:'top',   dir:[0,1,0],  col:2,row:1,title:'上'},
+  {t:'B',f:'left',  dir:[-1,0,0], col:1,row:2,title:'左'},
+  {t:'A',f:'front', dir:[0,0,1],  col:2,row:2,title:'正面'},
+  {t:'A',f:'right', dir:[1,0,0],  col:3,row:2,title:'右'},
+  {t:'B',f:'back',  dir:[0,0,-1], col:4,row:2,title:'背面'},
+  {t:'B',f:'bottom',dir:[0,-1,0], col:2,row:3,title:'下'},
+  {t:'A',f:'all',   dir:[1,0.8,1],col:1,row:4,title:'等角'},
+];
+const viewGrid=$('view-grid');
+if(viewGrid){
+  viewGrid.innerHTML=VIEW_BTNS.map(b=>
+    `<button class="vbtn" data-dir="${b.dir.join(',')}" title="${b.title}" style="grid-column:${b.col};grid-row:${b.row}">${cubeIcon(b.t,b.f)}</button>`
+  ).join('');
+  viewGrid.addEventListener('click',e=>{
+    const btn=e.target.closest('.vbtn'); if(!btn)return;
+    setViewDir(new THREE.Vector3(...btn.dataset.dir.split(',').map(Number)));
   });
-  if(dir.lengthSq()===0)return;
-  setViewDir(dir);
-});
+}
 
 function setViewDir(dir){
   if(!modelGroup)return;

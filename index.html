@@ -493,7 +493,7 @@ let isDark = false;
 function applyTheme() {
   document.body.classList.toggle('light',!isDark);
   renderer.setClearColor(isDark ? 0x0f1117 : 0xeef2f6);
-  edgeMat.color.set(isDark ? 0xaebccf : 0x2a3040);
+  edgeMat.color.set(isDark ? 0x3a435c : 0x2a3040);
   $('theme-btn').textContent = isDark ? '☀️' : '🌙';
 }
 $('theme-btn').addEventListener('click',()=>{ isDark=!isDark; applyTheme(); });

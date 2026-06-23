@@ -1082,7 +1082,9 @@ $('btn-edge').addEventListener('click',()=>{
 });
 
 // ---- ViewCube（SolidWorks風の方向選択キューブ） ----
-let cubeReady=false;
+// var で巻き上げ初期化（undefined）。animate の初回同期実行が cubeReady より先に
+// renderViewCube を呼ぶため、let だと TDZ 例外でスクリプトが中断してしまう。
+var cubeReady=false;
 const cubeCanvas=$('viewcube');
 const cubeRenderer=new THREE.WebGLRenderer({canvas:cubeCanvas,antialias:true,alpha:true});
 cubeRenderer.setPixelRatio(Math.min(window.devicePixelRatio,2));

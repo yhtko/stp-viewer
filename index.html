@@ -211,12 +211,12 @@ input[type=range] { flex:1;cursor:pointer;accent-color:var(--accent); }
 #parts-panel {
   position:absolute; top:12px; left:104px;
   background:var(--panel-bg); border:1px solid var(--border); border-radius:8px;
-  padding:10px 12px; backdrop-filter:blur(8px); display:none;
-  box-shadow:0 6px 22px rgba(15,23,42,0.16); width:260px; max-height:54vh; overflow:hidden;
+  padding:10px 12px; backdrop-filter:blur(8px); display:none; flex-direction:column;
+  box-shadow:0 6px 22px rgba(15,23,42,0.16); width:260px; max-height:calc(100vh - 96px); overflow:hidden;
 }
 .parts-title { font-size:10px;font-weight:700;letter-spacing:0.08em;color:var(--text3);text-transform:uppercase;margin-bottom:8px; }
-.parts-controls { background:var(--panel-bg);padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:8px; }
-#parts-list { max-height:calc(54vh - 132px);overflow:auto;padding-right:3px; }
+.parts-controls { background:var(--panel-bg);padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:8px;flex-shrink:0; }
+#parts-list { flex:1 1 auto;min-height:0;overflow:auto;padding-right:3px; }
 #parts-list::-webkit-scrollbar { width:6px; }
 #parts-list::-webkit-scrollbar-thumb { background:var(--border);border-radius:999px; }
 .part-row { display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:7px;margin-bottom:6px;font-size:11px;color:var(--text2); }
@@ -1227,12 +1227,13 @@ $('btn-face').addEventListener('click',()=>{
 
 // パネル系メニュー（ビュー/断面/部品）は押すと右側に展開、排他的に切替
 const PANELS={view:'view-panel',clip:'clip-panel',parts:'parts-panel'};
+const PANEL_DISP={view:'block',clip:'block',parts:'flex'}; // parts は flex 縦並び
 function togglePanel(which){
   const target=$(PANELS[which]);
-  const willShow=target.style.display!=='block';
+  const willShow=!target.style.display||target.style.display==='none';
   Object.values(PANELS).forEach(id=>$(id).style.display='none');
   Object.keys(PANELS).forEach(k=>$('btn-'+k).classList.remove('active'));
-  if(willShow){ target.style.display='block'; $('btn-'+which).classList.add('active'); }
+  if(willShow){ target.style.display=PANEL_DISP[which]; $('btn-'+which).classList.add('active'); }
 }
 $('btn-view').addEventListener('click',()=>{ if(!modelGroup)return; togglePanel('view'); });
 $('btn-clip').addEventListener('click',()=>togglePanel('clip'));

@@ -112,10 +112,11 @@ main { flex:1; position:relative; overflow:hidden; }
 /* Style switcher - bottom right of toolbar area */
 .style-sw {
   position:absolute; bottom:16px; right:16px;
-  display:none; gap:3px;
+  display:none; flex-direction:column; gap:6px;
   background:var(--panel-bg); border:1px solid var(--border); border-radius:8px;
-  padding:4px; backdrop-filter:blur(8px);
+  padding:6px; backdrop-filter:blur(8px); box-shadow:0 4px 18px rgba(15,23,42,0.16);
 }
+.style-modes { display:flex; gap:3px; }
 .style-btn {
   padding:5px 10px; border-radius:5px; border:none;
   font-size:11px; font-weight:500; cursor:pointer;
@@ -123,6 +124,14 @@ main { flex:1; position:relative; overflow:hidden; }
 }
 .style-btn:hover { color:var(--text); }
 .style-btn.active { background:var(--bg3); color:var(--text); }
+.swatches { display:flex; gap:4px; }
+.swatch {
+  width:22px; height:22px; border-radius:5px; border:2px solid transparent;
+  cursor:pointer; padding:0; transition:transform 0.12s;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,0.14);
+}
+.swatch:hover { transform:scale(1.1); }
+.swatch.active { border-color:var(--accent); }
 
 /* 規定ビューパネル - 左上 */
 #view-panel {
@@ -362,8 +371,12 @@ body.face-mode #canvas { cursor:crosshair; }
 
   <!-- スタイル切替 -->
   <div class="style-sw" id="style-sw">
-    <button class="style-btn active" data-style="matte">マット</button>
-    <button class="style-btn" data-style="grey">グレー</button>
+    <div class="style-modes">
+      <button class="style-btn active" data-style="matte">マット</button>
+      <button class="style-btn" data-style="grey">単色</button>
+    </div>
+    <div class="swatches" id="matte-swatches"></div>
+    <div class="swatches" id="solid-swatches" style="display:none"></div>
   </div>
 
   <div class="hint" id="hint">左ドラッグ: 回転 ／ 右ドラッグ: 移動 ／ ホイール: ズーム</div>
@@ -505,7 +518,18 @@ function addEdges(mesh,geo){
   line.visible=edgesVisible;
   mesh.add(line);
 }
-const palette=[0x4a90d9,0x5ba8a0,0x7b68cc,0x4aac6e,0xc07840];
+// マット用パレット（複数プリセット）と単色用カラー（複数プリセット）
+const MATTE_PALETTES={
+  '標準':   [0x4a90d9,0x5ba8a0,0x7b68cc,0x4aac6e,0xc07840],
+  'ビビッド':[0xe74c3c,0xf39c12,0x2ecc71,0x3498db,0x9b59b6],
+  'パステル':[0x8fb8e8,0x9ad6c8,0xc6b3e8,0xa8d8a8,0xf0c98a],
+  'アース': [0x8d6e63,0xb08968,0xc9b07a,0x7d9a76,0x9aa3b2],
+};
+const SOLID_COLORS={
+  'グレー':0xb0b8c4,'ブルー':0x8aa6c8,'グリーン':0x9bc2a0,'サンド':0xcabf95,'スレート':0x9aa3b2,
+};
+let currentMatteKey='標準', currentSolidKey='グレー';
+let currentPalette=MATTE_PALETTES[currentMatteKey], currentSolid=SOLID_COLORS[currentSolidKey];
 const SEL_COLORS=[0xf0c040,0xff6b6b];
 
 function setStatus(cls,txt){ $('dot').className='dot '+cls; $('stxt').textContent=txt; }
@@ -520,8 +544,8 @@ function makeMat(style,index){
     clippingPlanes:clipPlanes.filter((_,i)=>clipEnabled[i]),
     transparent,opacity:transparent?0.32:1,depthWrite:!transparent,
   };
-  if(style==='matte') return new THREE.MeshLambertMaterial({...base,color:palette[index%palette.length]});
-  return new THREE.MeshStandardMaterial({...base,color:0xb0b8c4,roughness:0.65,metalness:0.08});
+  if(style==='matte') return new THREE.MeshLambertMaterial({...base,color:currentPalette[index%currentPalette.length]});
+  return new THREE.MeshStandardMaterial({...base,color:currentSolid,roughness:0.65,metalness:0.08});
 }
 
 function refreshMeshMaterial(mesh){
@@ -657,12 +681,40 @@ function formatSelectionText(){
   return lines.join('\n');
 }
 
+// ---- スタイル（マットパレット / 単色）切替 ----
+const hex=c=>'#'+c.toString(16).padStart(6,'0');
+function buildSwatches(){
+  $('matte-swatches').innerHTML=Object.entries(MATTE_PALETTES).map(([k,arr])=>{
+    const grad=`linear-gradient(135deg,${arr.map((c,i)=>`${hex(c)} ${Math.round(i/(arr.length-1)*100)}%`).join(',')})`;
+    return `<button class="swatch ${k===currentMatteKey?'active':''}" data-matte="${k}" title="${k}" style="background:${grad}"></button>`;
+  }).join('');
+  $('solid-swatches').innerHTML=Object.entries(SOLID_COLORS).map(([k,c])=>
+    `<button class="swatch ${k===currentSolidKey?'active':''}" data-solid="${k}" title="${k}" style="background:${hex(c)}"></button>`
+  ).join('');
+}
+buildSwatches();
+
 document.querySelectorAll('.style-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{
     document.querySelectorAll('.style-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
+    const matte=btn.dataset.style==='matte';
+    $('matte-swatches').style.display=matte?'flex':'none';
+    $('solid-swatches').style.display=matte?'none':'flex';
     applyStyle(btn.dataset.style);
   });
+});
+$('matte-swatches').addEventListener('click',e=>{
+  const sw=e.target.closest('[data-matte]'); if(!sw)return;
+  currentMatteKey=sw.dataset.matte; currentPalette=MATTE_PALETTES[currentMatteKey];
+  $('matte-swatches').querySelectorAll('.swatch').forEach(s=>s.classList.toggle('active',s.dataset.matte===currentMatteKey));
+  applyStyle('matte');
+});
+$('solid-swatches').addEventListener('click',e=>{
+  const sw=e.target.closest('[data-solid]'); if(!sw)return;
+  currentSolidKey=sw.dataset.solid; currentSolid=SOLID_COLORS[currentSolidKey];
+  $('solid-swatches').querySelectorAll('.swatch').forEach(s=>s.classList.toggle('active',s.dataset.solid===currentSolidKey));
+  applyStyle('grey');
 });
 
 // ---- Face geometry ----

@@ -124,27 +124,24 @@ main { flex:1; position:relative; overflow:hidden; }
 .style-btn:hover { color:var(--text); }
 .style-btn.active { background:var(--bg3); color:var(--text); }
 
-/* 規定ビュー panel - bottom center, above toolbar */
-#view-panel {
-  position:absolute; bottom:84px; left:50%; transform:translateX(-50%);
-  display:none; gap:4px;
-  background:var(--panel-bg); border:1px solid var(--border); border-radius:10px;
-  padding:5px; backdrop-filter:blur(8px); box-shadow:0 4px 20px rgba(0,0,0,0.18);
-  max-width:calc(100vw - 16px); overflow-x:auto;
+/* ViewCube - 左上の方向選択キューブ */
+#viewcube {
+  position:absolute; top:12px; left:12px;
+  width:108px; height:108px; display:none; cursor:default; z-index:6;
+  filter:drop-shadow(0 2px 8px rgba(15,23,42,0.25));
 }
-.view-btn {
-  padding:6px 11px; border-radius:6px; border:1px solid var(--border);
-  background:var(--bg3); color:var(--text2); font-size:12px; font-weight:600;
-  cursor:pointer; transition:all 0.15s; min-width:38px; white-space:nowrap;
+#viewcube-label {
+  position:absolute; top:120px; left:12px; display:none; z-index:6;
+  font-size:9px; font-weight:700; letter-spacing:0.08em; color:var(--text3);
+  text-transform:uppercase; pointer-events:none; text-shadow:0 1px 2px var(--bg);
 }
-.view-btn:hover { color:var(--text); border-color:var(--text3); }
 
 /* Parts panel filename */
 .parts-file { font-size:11px;color:var(--text2);font-weight:600;margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 
-/* Info panel - top left */
+/* Info panel - bottom left (top-left is used by the ViewCube) */
 .info-panel {
-  position:absolute; top:12px; left:12px;
+  position:absolute; bottom:12px; left:12px;
   background:var(--panel-bg); border:1px solid var(--border); border-radius:8px;
   padding:10px 14px; font-size:11px; color:var(--text3); line-height:1.8;
   backdrop-filter:blur(8px); display:none;
@@ -199,7 +196,7 @@ input[type=range] { flex:1;cursor:pointer;accent-color:var(--accent); }
 
 /* Parts panel */
 #parts-panel {
-  position:absolute; top:12px; left:12px; transform:translateY(74px);
+  position:absolute; top:12px; left:12px; transform:translateY(132px);
   background:var(--panel-bg); border:1px solid var(--border); border-radius:8px;
   padding:10px 12px; backdrop-filter:blur(8px); display:none;
   box-shadow:0 6px 22px rgba(15,23,42,0.16); width:260px; max-height:54vh; overflow:hidden;
@@ -338,7 +335,6 @@ body.face-mode #canvas { cursor:crosshair; }
   <!-- ツールバー -->
   <div class="toolbar" id="toolbar">
     <button class="tool-btn" id="btn-fit"><span class="icon">⊡</span>全体表示</button>
-    <button class="tool-btn" id="btn-view"><span class="icon">⊞</span>ビュー</button>
     <button class="tool-btn" id="btn-wire"><span class="icon">⬡</span>ワイヤー</button>
     <button class="tool-btn" id="btn-edge"><span class="icon">◫</span>エッジ</button>
     <div class="tool-sep"></div>
@@ -352,16 +348,9 @@ body.face-mode #canvas { cursor:crosshair; }
     <button class="tool-btn" id="btn-guide"><span class="icon">？</span>使い方</button>
   </div>
 
-  <!-- 規定ビュー -->
-  <div id="view-panel">
-    <button class="view-btn" data-view="front">前</button>
-    <button class="view-btn" data-view="back">後</button>
-    <button class="view-btn" data-view="left">左</button>
-    <button class="view-btn" data-view="right">右</button>
-    <button class="view-btn" data-view="top">上</button>
-    <button class="view-btn" data-view="bottom">下</button>
-    <button class="view-btn" data-view="iso">等角</button>
-  </div>
+  <!-- ViewCube（左上の方向選択キューブ） -->
+  <canvas id="viewcube"></canvas>
+  <div id="viewcube-label">ビュー</div>
 
   <!-- スタイル切替 -->
   <div class="style-sw" id="style-sw">
@@ -493,6 +482,7 @@ $('theme-btn').addEventListener('click',()=>{ isDark=!isDark; applyTheme(); });
   requestAnimationFrame(animate);
   orbitControls.update();
   renderer.render(scene,camera);
+  if(typeof renderViewCube==='function')renderViewCube();
 })();
 
 // ---- State ----
@@ -906,6 +896,8 @@ async function loadSTP(buffer,filename){
     $('info').style.display='block';
     $('toolbar').style.display='flex';
     $('style-sw').style.display='flex';
+    $('viewcube').style.display='block';
+    $('viewcube-label').style.display='block';
     $('parts-file').textContent=filename;
     renderPartsPanel();
     $('dropzone').classList.add('hidden');
@@ -1089,41 +1081,84 @@ $('btn-edge').addEventListener('click',()=>{
   modelGroup.traverse(o=>{if(o.userData.isEdge)o.visible=edgesVisible;});
 });
 
-// ---- 規定ビュー ----
-const VIEWS={
-  front:{dir:[0,0,1],up:[0,1,0]},
-  back:{dir:[0,0,-1],up:[0,1,0]},
-  right:{dir:[1,0,0],up:[0,1,0]},
-  left:{dir:[-1,0,0],up:[0,1,0]},
-  top:{dir:[0,1,0],up:[0,0,-1]},
-  bottom:{dir:[0,-1,0],up:[0,0,1]},
-  iso:{dir:[1,0.8,1],up:[0,1,0]},
-};
-function setView(name){
+// ---- ViewCube（SolidWorks風の方向選択キューブ） ----
+let cubeReady=false;
+const cubeCanvas=$('viewcube');
+const cubeRenderer=new THREE.WebGLRenderer({canvas:cubeCanvas,antialias:true,alpha:true});
+cubeRenderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+cubeRenderer.setSize(108,108);
+const cubeScene=new THREE.Scene();
+const cubeCam=new THREE.OrthographicCamera(-1.7,1.7,1.7,-1.7,0.1,20);
+cubeCam.position.set(0,0,6); cubeCam.lookAt(0,0,0);
+cubeScene.add(new THREE.AmbientLight(0xffffff,1));
+
+function cubeFaceTexture(label){
+  const c=document.createElement('canvas'); c.width=c.height=128;
+  const x=c.getContext('2d');
+  x.fillStyle='#eef2f7'; x.fillRect(0,0,128,128);
+  x.strokeStyle='#9aa7b8'; x.lineWidth=7; x.strokeRect(4,4,120,120);
+  x.fillStyle='#27324a'; x.font='bold 54px system-ui,-apple-system,sans-serif';
+  x.textAlign='center'; x.textBaseline='middle'; x.fillText(label,64,70);
+  return new THREE.CanvasTexture(c);
+}
+// BoxGeometryのマテリアル順: +X,-X,+Y,-Y,+Z,-Z
+const cubeLabels=['右','左','上','下','前','後'];
+const CUBE_BASE=0xcdd6e2, CUBE_HOVER=0x6c8ebf;
+const cubeMats=cubeLabels.map(l=>new THREE.MeshBasicMaterial({map:cubeFaceTexture(l),color:CUBE_BASE}));
+const cube=new THREE.Mesh(new THREE.BoxGeometry(2,2,2),cubeMats);
+cube.add(new THREE.LineSegments(new THREE.EdgesGeometry(cube.geometry),new THREE.LineBasicMaterial({color:0x5a6678})));
+cubeScene.add(cube);
+cubeReady=true;
+
+function renderViewCube(){
+  if(!cubeReady)return;
+  cube.quaternion.copy(camera.quaternion).invert();
+  cube.updateMatrixWorld();
+  cubeRenderer.render(cubeScene,cubeCam);
+}
+
+const cubeRay=new THREE.Raycaster();
+function cubePick(ev){
+  const r=cubeCanvas.getBoundingClientRect();
+  const m=new THREE.Vector2(((ev.clientX-r.left)/r.width)*2-1,-((ev.clientY-r.top)/r.height)*2+1);
+  cubeRay.setFromCamera(m,cubeCam);
+  return cubeRay.intersectObject(cube,false)[0]||null;
+}
+cubeCanvas.addEventListener('mousemove',ev=>{
+  const hit=cubePick(ev);
+  const fi=hit?Math.floor(hit.faceIndex/2):-1;
+  cubeMats.forEach((mm,i)=>mm.color.setHex(i===fi?CUBE_HOVER:CUBE_BASE));
+  cubeCanvas.style.cursor=hit?'pointer':'default';
+});
+cubeCanvas.addEventListener('mouseleave',()=>cubeMats.forEach(mm=>mm.color.setHex(CUBE_BASE)));
+cubeCanvas.addEventListener('click',ev=>{
+  const hit=cubePick(ev); if(!hit||!modelGroup)return;
+  const n=hit.face.normal, p=cube.worldToLocal(hit.point.clone());
+  // 面=軸方向、辺/角=斜め方向（3x3領域判定）
+  const dir=new THREE.Vector3();
+  ['x','y','z'].forEach(ax=>{
+    if(Math.abs(n[ax])>0.5) dir[ax]=Math.sign(n[ax]);
+    else dir[ax]=Math.abs(p[ax])>0.4?Math.sign(p[ax]):0;
+  });
+  if(dir.lengthSq()===0)return;
+  setViewDir(dir);
+});
+
+function setViewDir(dir){
   if(!modelGroup)return;
-  const v=VIEWS[name];if(!v)return;
+  dir=dir.clone().normalize();
   const box=new THREE.Box3().setFromObject(modelGroup);
   const center=box.getCenter(new THREE.Vector3());
   const size=box.getSize(new THREE.Vector3());
   const maxDim=Math.max(size.x,size.y,size.z)||1;
   const dist=(maxDim/2)/Math.tan((camera.fov/2)*Math.PI/180)*2.2;
-  const dir=new THREE.Vector3(...v.dir).normalize();
+  const up=new THREE.Vector3(0,1,0);
+  if(Math.abs(dir.dot(up))>0.95) up.set(0,0,dir.y>0?-1:1);
   orbitControls.target.copy(center);
-  camera.up.set(...v.up);
+  camera.up.copy(up);
   camera.position.copy(center).addScaledVector(dir,dist);
-  camera.lookAt(center);
-  orbitControls.update();
+  camera.lookAt(center); orbitControls.update();
 }
-$('btn-view').addEventListener('click',()=>{
-  if(!modelGroup)return;
-  const panel=$('view-panel');
-  const visible=panel.style.display==='flex';
-  panel.style.display=visible?'none':'flex';
-  $('btn-view').classList.toggle('active',!visible);
-});
-document.querySelectorAll('.view-btn').forEach(b=>{
-  b.addEventListener('click',()=>setView(b.dataset.view));
-});
 
 $('btn-face').addEventListener('click',()=>{
   if(faceObjects.length===0)return;

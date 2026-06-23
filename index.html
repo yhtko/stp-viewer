@@ -1085,34 +1085,43 @@ $('btn-edge').addEventListener('click',()=>{
   modelGroup.traverse(o=>{if(o.userData.isEdge)o.visible=edgesVisible;});
 });
 
-// ---- 規定ビューパネル（SolidWorks風のアイソメ・キューブ アイコン一覧） ----
-// 各ビューを小さな等角投影キューブで表し、対象面を青で強調。全ビューを常時表示する。
-// type A = 上/正面/右が見える向き, type B = 下/背面/左が見える向き（Aの上下反転）
-function cubeIcon(type,hi){
-  const A={top:'24,6 42,16 24,26 6,16',front:'6,16 24,26 24,46 6,36',right:'42,16 24,26 24,46 42,36'};
-  const B={bottom:'24,46 42,36 24,26 6,36',back:'6,36 24,26 24,6 6,16',left:'42,36 24,26 24,6 42,16'};
-  const faces=type==='A'?A:B;
-  const order=type==='A'?['top','front','right']:['bottom','back','left'];
-  const polys=order.map(f=>{
-    const fill=(hi==='all'||hi===f)?'#5b8fd6':'#dbe1ea';
-    return `<polygon points="${faces[f]}" fill="${fill}" stroke="#39435a" stroke-width="1.3" stroke-linejoin="round"/>`;
-  }).join('');
-  return `<svg viewBox="0 0 48 52" width="30" height="32">${polys}</svg>`;
+// ---- 規定ビューパネル（SolidWorks風） ----
+// 全アイコンを同一向きのワイヤーフレーム立方体で描き、対象面だけ青で塗る。
+// 裏側の面（下/左/背面）もワイヤー越しに色が見える。
+// 立方体の6面（等角投影、中心(24,26)は手前/奥の角が重なる点）:
+const CUBE_FACES={
+  top:   '24,6 42,16 24,26 6,16',   // +Y 上の菱形
+  bottom:'24,26 42,36 24,46 6,36',  // -Y 下の菱形
+  right: '42,16 24,26 24,46 42,36', // +X 右下の面
+  left:  '24,6 6,16 6,36 24,26',    // -X 左上の面（裏）
+  front: '6,16 24,26 24,46 6,36',   // +Z 左下の面
+  back:  '24,6 42,16 42,36 24,26',  // -Z 右上の面（裏）
+};
+// 12辺（外周6 + 中心から6）
+const CUBE_EDGES=[
+  [24,6,42,16],[42,16,42,36],[42,36,24,46],[24,46,6,36],[6,36,6,16],[6,16,24,6],
+  [24,26,24,6],[24,26,42,16],[24,26,6,16],[24,26,42,36],[24,26,6,36],[24,26,24,46],
+];
+function cubeIcon(view){
+  const hi=view==='iso'?['top','front','right']:[view];
+  const faces=hi.map(f=>`<polygon points="${CUBE_FACES[f]}" fill="#5b8fd6" fill-opacity="0.82" stroke="none"/>`).join('');
+  const edges=CUBE_EDGES.map(([x1,y1,x2,y2])=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#39435a" stroke-width="1.2" stroke-linecap="round"/>`).join('');
+  return `<svg viewBox="0 0 48 52" width="30" height="32">${faces}${edges}</svg>`;
 }
 
 const VIEW_BTNS=[
-  {t:'A',f:'top',   dir:[0,1,0],  col:2,row:1,title:'上'},
-  {t:'B',f:'left',  dir:[-1,0,0], col:1,row:2,title:'左'},
-  {t:'A',f:'front', dir:[0,0,1],  col:2,row:2,title:'正面'},
-  {t:'A',f:'right', dir:[1,0,0],  col:3,row:2,title:'右'},
-  {t:'B',f:'back',  dir:[0,0,-1], col:4,row:2,title:'背面'},
-  {t:'B',f:'bottom',dir:[0,-1,0], col:2,row:3,title:'下'},
-  {t:'A',f:'all',   dir:[1,0.8,1],col:1,row:4,title:'等角'},
+  {v:'top',   dir:[0,1,0],  col:2,row:1,title:'上'},
+  {v:'left',  dir:[-1,0,0], col:1,row:2,title:'左'},
+  {v:'front', dir:[0,0,1],  col:2,row:2,title:'正面'},
+  {v:'right', dir:[1,0,0],  col:3,row:2,title:'右'},
+  {v:'back',  dir:[0,0,-1], col:4,row:2,title:'背面'},
+  {v:'bottom',dir:[0,-1,0], col:2,row:3,title:'下'},
+  {v:'iso',   dir:[1,0.8,1],col:1,row:4,title:'等角'},
 ];
 const viewGrid=$('view-grid');
 if(viewGrid){
   viewGrid.innerHTML=VIEW_BTNS.map(b=>
-    `<button class="vbtn" data-dir="${b.dir.join(',')}" title="${b.title}" style="grid-column:${b.col};grid-row:${b.row}">${cubeIcon(b.t,b.f)}</button>`
+    `<button class="vbtn" data-dir="${b.dir.join(',')}" title="${b.title}" style="grid-column:${b.col};grid-row:${b.row}">${cubeIcon(b.v)}</button>`
   ).join('');
   viewGrid.addEventListener('click',e=>{
     const btn=e.target.closest('.vbtn'); if(!btn)return;

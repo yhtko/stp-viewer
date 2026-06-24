@@ -264,6 +264,15 @@ body { height: 100dvh; }
 /* Firefox: hide horizontal scrollbar on toolbar */
 .toolbar { scrollbar-width: none; }
 
+/* Fix toolbar max-height with dvh so browser chrome doesn't eat into it */
+.toolbar { max-height: calc(100dvh - 76px); }
+
+/* Tablet landscape: compact buttons so all 10 fit without scrolling */
+@media (orientation: landscape) and (min-height: 431px) and (max-width: 1366px) {
+  .tool-btn        { padding: 5px 10px; font-size: 9px; }
+  .tool-btn .icon  { font-size: 16px; }
+}
+
 /* Mobile portrait — narrow screens (phone, small tablet) */
 @media (max-width: 480px) {
   .tool-btn        { padding: 6px 10px; min-width: 44px; font-size: 9px; }

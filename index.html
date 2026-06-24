@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>STP Viewer</title>
 <style>
 :root {
@@ -248,6 +248,67 @@ body.face-mode #canvas { cursor:crosshair; }
 .guide-row { display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:12px;color:var(--text2); }
 .guide-key { background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;color:var(--text);white-space:nowrap; }
 .guide-close { width:100%;padding:8px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;margin-top:6px; }
+
+/* ============================================================
+   MOBILE / TABLET RESPONSIVE FIXES
+   ============================================================ */
+
+/* iOS 100vh bug fix: dvh excludes browser chrome (Safari 15.4+, Chrome 108+) */
+body { height: 100dvh; }
+
+/* Lift bottom-anchored elements above iPhone home bar */
+.hint       { bottom: calc(70px + env(safe-area-inset-bottom, 0px)); }
+.style-sw   { bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+.info-panel { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+
+/* Firefox: hide horizontal scrollbar on toolbar */
+.toolbar { scrollbar-width: none; }
+
+/* Mobile portrait — narrow screens (phone, small tablet) */
+@media (max-width: 480px) {
+  .tool-btn        { padding: 6px 10px; min-width: 44px; font-size: 9px; }
+  .tool-btn .icon  { font-size: 16px; }
+  .toolbar         { max-height: calc(100vh - 96px); max-height: calc(100dvh - 96px); }
+  #view-panel, #clip-panel, #parts-panel {
+    max-width: calc(100vw - 120px);
+    width: calc(100vw - 120px);
+  }
+  #clip-panel  { min-width: unset; }
+  #parts-panel { width: calc(100vw - 120px); }
+  #sel-panel   { right: 8px; min-width: unset; max-width: calc(100vw - 24px); }
+}
+
+/* Landscape phone: toolbar too tall → flip to horizontal bottom strip */
+@media (max-height: 430px) and (max-width: 900px) {
+  .toolbar {
+    top: auto;
+    bottom: env(safe-area-inset-bottom, 0px);
+    left: 0; right: 0;
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto; overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    border-radius: 0;
+    border-left: none; border-right: none; border-bottom: none;
+    border-top: 1px solid var(--border);
+    padding: 4px 6px; gap: 2px;
+    flex-wrap: nowrap;
+  }
+  .tool-sep       { width: 1px; height: auto; margin: 4px 2px; align-self: stretch; }
+  .tool-btn       { padding: 4px 8px; min-width: 40px; flex-shrink: 0; font-size: 9px; }
+  .tool-btn .icon { font-size: 15px; }
+  /* Canvas stays above horizontal toolbar */
+  main { padding-bottom: 52px; }
+  /* Panels shift left (no left toolbar column in landscape) */
+  #view-panel, #clip-panel, #parts-panel {
+    left: 12px; max-width: calc(100vw - 24px); width: auto;
+  }
+  #parts-panel { max-height: calc(100vh - 120px); max-height: calc(100dvh - 120px); }
+  /* Raise bottom elements above the horizontal toolbar bar */
+  .style-sw   { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  .info-panel { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); left: 12px; }
+  .hint       { bottom: calc(62px + env(safe-area-inset-bottom, 0px)); }
+}
 </style>
 </head>
 <body class="light">
